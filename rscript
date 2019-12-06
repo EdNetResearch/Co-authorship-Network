@@ -1,0 +1,128 @@
+---
+title: "Co_Authorship_Network"
+author: "Tim Butler; with input from Thomas Cowhitt"
+date: "12/6/2019"
+application: "see Cowhitt, T., Butler, T., & Wilson, E. (2020). Using Social Network Analysis to Complete Literature Reviews: a new systematic approach for independent researchers to detect and interpret prominent research programs within large collections of relevant literature. International Journal of Social Research Methodology."
+output: html_document
+editor_options:
+  chunk_output_type: inline
+---
+# Input and output paths
+```{r paths}
+input_folder <- "~/Desktop/input_files/" #path to folder containing .csv files of database outputs
+input_files <- list.files(input_folder, full.names = T)
+print(length(input_files))
+output_folder <- "~/Desktop/combination_out/"
+dir.create(output_folder)
+```
+
+# Initialize libraries
+```{r libs}
+library(tidyr)
+library(dplyr)
+library(data.table)
+```
+
+# Functions
+```{r functions, include=FALSE}
+# Function to determine file format, load approprate author column
+format_detection <- function(x) {
+  file <- fread(x)
+  if (colnames(file)[1] == "Authors" && colnames(file)[2] == "Title") {
+    print("Google Scholar Format Detected")
+    format <- "google"
+    authors <- lapply(file[,1], tolower)
+    cbind(input_file = x, format, authors)
+  } else if (colnames(file)[1] == "Authors" && colnames(file)[3] == "Title") {
+    print("Scopus Format Detected")
+    format <- "scopus"
+    authors <- lapply(file[,1], tolower)
+    cbind(input_file = x, format, authors)
+  } else if (colnames(file)[2] == "Author") {
+    print("British Education Indefile Format Detected")
+    format <- "bei"
+    authors <- lapply(file[,2], tolower)
+    cbind(input_file = x, format, authors)
+  } else {
+    print("Web of Science Format")
+    file <- fread(x, skip = "Title")
+    format <- "web"
+    authors <- lapply(file[,2], tolower)
+    cbind(input_file = x, format, authors)
+  }
+}
+
+# Function to capitalize first letter
+CapStr <- function(y) {
+  c <- strsplit(y, " ")[[1]]
+  paste(toupper(substring(c, 1,1)), substring(c, 2),
+        sep="", collapse=" ")
+}
+
+# Function to reformat author names to last name + first letter of first name
+name_condensor <- function(x) {
+  init_split <- unlist(strsplit(x, name_sep)) # Seperate componenets of author name by periods
+      init_split <- trimws(init_split)
+      if (name_sep == "\\.") { # check whether input is scopus format, in which case first element of name already includes last + first initial
+        sapply(init_split[1][1], CapStr)
+      } else {
+        if (length(init_split) > 1) { # checks whethere there are multiple names
+        paste(sapply(init_split[1][1], CapStr), toupper(substr(init_split[2], 1, 1))) # Take only the first portion of the name (last name plus 1st inital) and add to new character
+        } else {
+          sapply(init_split[1][1], CapStr)
+        }
+      }
+}
+
+# Function to generate author combinations from author list
+author_combiner <- function(x) {
+  paper_authors <- trimws(x, which = "both") # remove any spaces from author names, especially trailing spaces
+  paper_authors_sep <-  unlist(strsplit(paper_authors, field_sep))
+  simplified_authors <- lapply(paper_authors_sep, name_condensor) # Run function to condense names to last nume + first initial
+  if (length(simplified_authors) > 1) { # checks to see if paper is single author, ignores if true
+    this_combo <- data.table(t(combn(simplified_authors,2))) # Generate combinations 
+    this_combo # Add paper's combos to list
+  }
+}
+
+```
+# Identify file formats
+```{r format detection}
+author_lists <- lapply(input_files, format_detection)
+```
+# Go through author lists, generate pairwise combinations
+```{r combinations}
+file_list <- list()
+for (i in 1:length(author_lists)) {
+  format = author_lists[[i]][[2]]
+  if (format != "scopus") { #scopus uses a "," seperator for authors and a "." for name components
+    field_sep = ";"
+    name_sep = ","
+  } else {
+    field_sep = ","
+    name_sep = "\\."
+  }
+  authors <- author_lists[[i]][[3]]
+  combined_authors <- lapply(authors, author_combiner) %>% bind_rows()
+file_list[[i]] <- combined_authors # Add file combinations to overall list
+}
+
+# Combine Into Single data frame
+combination_df <- bind_rows(file_list) # Combine combinations from all files
+colnames(combination_df) <- c("Author1", "Author2") # rename column names
+```
+# summarise and save
+```{r summarise and save}
+# Create List of all unique names in dataset
+unique_names <- data.frame(Unique_Names = unique(unlist(combination_df, use.names = FALSE)))
+
+# Summarize unique names and combinations
+print(paste("There are:", nrow(unique_names), "Unique Names"))
+print(paste("There are:", nrow(combination_df), "Total Combinations"))
+
+combination_mat <- as.matrix(combination_df)
+
+# Write output csv, 1 of combinations, 1 of uniques names
+write.csv(combination_mat, file = paste0(output_folder, "Combiation_Table.csv"), row.names = F)
+write.csv(unique_names, file = paste0(output_folder, "Unique_Name_List.csv"), row.names = F)
+```
